@@ -46,3 +46,23 @@ liver - liczba zgonów z powodu nowotworu wątroby na 10 000 osób;
 stomach - liczba zgonów z powodu nowotworu żołądka na 10 000 osób;
 
 population - liczba ludności; zmiennej użyto jedynie do przeliczenia pozostałych zmiennych.
+
+## Linki do danych
+
+<https://data.worldbank.org/indicator/SP.POP.TOTL>
+
+<https://ourworldindata.org/how-many-people-in-the-world-die-from-cancer>
+
+<https://ec.europa.eu/eurostat/databrowser/view/sdg_11_50/default/table?lang=en>
+
+<https://hdr.undp.org/sites/default/files/hdr_2019_overview_-_english.pdf>
+
+<https://data.worldbank.org/indicator/SH.PRV.SMOK?end=2018&start=2018>
+
+<https://ourworldindata.org/drug-use>
+
+<https://www.who.int/data/gho/data/indicators/indicator-details/GHO/medical-doctors-(per-10-000-population>
+
+<https://data.worldbank.org/indicator/SH.ALC.PCAP.LI>
+
+<https://data.worldbank.org/indicator/SH.STA.SUIC.P5>
