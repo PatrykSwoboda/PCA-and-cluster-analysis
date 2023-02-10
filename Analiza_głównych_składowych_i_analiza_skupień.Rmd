@@ -1,0 +1,407 @@
+---
+title: Analiza głównych składowych i analiza skupień dla danych z 2018 r. dotyczących
+  państw UE
+author: "Patryk Swoboda"
+date: "2023-02-10"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 2
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+    code_folding: hide
+  word_document:
+    toc: yes
+    toc_depth: '2'
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+library(ggplot2)
+library(knitr)
+library(tidyverse)
+library(ggrepel)
+library(GGally)
+library(DataExplorer)
+library(fpc)
+library(plotly)
+library(psych)
+library(corrplot)
+library(ggfortify)
+library(FactoMineR)
+library(factoextra)
+```
+
+# Analiza głównych składowych
+
+## Sprawdzenie podstawowych zależności między zmiennymi
+
+Dokonano tego poprzez użycie funkcji str oraz summary. Dzięki
+pierwszej z nich można się dowiedzieć, że w zbiorze danych jest jedna
+zmienna character (country), jedna zmienna integer (population) a
+pozostałe czternaście to zmienne numeric.
+
+```{r}
+health <- read.csv2("C:/Users/swobo/Desktop/PRZEDMIOTY UCZELNIANE/SEMESTR 4/Modelowanie statystycznie i data mining w R/Modelowanie_Rstudio/data/health.csv")
+
+str(health)
+summary(health)
+health <- health %>%
+  rename(country = ď.żcountry)
+```
+
+## Sprawdzenie kryteriów PCA dla wszystkich zmiennych
+
+Wykonano to, aby wiedzieć, czy można dokonywać redukcji wymiarów z
+badanych zmiennych.
+
+```{r}
+cor(health[, 2:16])
+corrplot(cor(health[, 2:16]), order = "hclust", tl.cex = 0.7)
+cortest.bartlett(cor(health[, 2:16]), n = nrow(health))
+KMO(cor(health[, 2:16]))
+```
+
+## Odrzucenie nieistotnych zmiennych i ponowne sprawdzenie kryteriów
+
+```{r}
+data <- health %>% select(-c("population", "doctors","alcohol_liters", 
+                             "suicide_rate", "deaths_alcohol", "liver", 
+                             "stomach"))
+str(data)
+```
+
+Odrzucono zmienne population, doctors, alcohol_liters, suicide_rate,
+deaths_alcohol, liver i stomach.
+
+```{r}
+corrplot.mixed(cor(data[, 2:9]), order = "hclust", tl.cex = 0.7)
+cortest.bartlett(cor(data[, 2:9]), n = nrow(data))
+KMO(cor(data[, 2:9]))
+```
+
+Wartość p-value to 1.325046e-13, a KMO wyniosło 0,71. Po odrzuceniu mało
+istotnych zmiennych otrzymano zbiór danych zdatny do redukcji wymiarów.
+
+## Analiza i wybór składowych
+
+```{r}
+pr.data <- principal(data[, 2:9], nfactors = 7, rotate = "none")
+
+pca <- PCA(data[, 2:9], graph = FALSE)
+fviz_screeplot(pca, addlabels = TRUE) +
+  geom_hline(yintercept = 10, color = "red")
+```
+
+Z powyższego wykresu wynika, że najlepiej jest wziąć dwa wymiary
+wyjaśniające ponad 69% zmienności zbioru danych. Podjęto taką decyzję,
+ponieważ na wykresie widoczne są dwa większe wypłaszczenia, jednak
+pierwsze z nich sprawia, że wykres osuwiska staje się mniej stromy.
+Znajduje się ono przy drugiej składowej, co wskazuje na wybranie takiej
+ilości. Z kryterium Kaisera wynika, że trzy składowe znajdują się
+powyżej wartości 10, jednak osuwisko nie jest tam strome.
+
+Na biplocie bez rotacji prezentują się następująco:
+
+```{r}
+pr.data <- principal(data[, 2:9], nfactors = 2, rotate = "none")
+fviz_pca(pca, repel = TRUE)
+print(pr.data$loadings, cutoff = 0.55)
+```
+
+### Varimax
+
+Aby wyraźniej pokazać związki między utworzonymi składowymi i
+oryginalnymi zmiennymi, wykonaliśmy dodatkową rotację varimax.
+
+```{r}
+pr.data.rot <- principal(data[, 2:9], nfactors = 2, rotate = "varimax")
+
+biplot(pr.data.rot, main = "Biplot after applying varimax rotation")
+```
+
+Po zastosowaniu rotacji wynika, że pierwsza składowa jest 
+reprezentowana poprzez odwrotnie proporcjonalną relację wskaźnika rozwoju
+społecznego do ekspozycji na zanieczyszczenia powietrza. Natomiast druga
+składowa jest mocno skorelowana ze zgonami na poszczególne nowotwory.
+Jedyną zmienną ewidentnie nieskorelowaną z dwiema składowymi jest liczba
+zgonów na nowotwory jelita grubego, jednak zestawienie tej zmiennej 
+z pozostałymi może służyć jako potwierdzenie trafności obliczeń względem 
+lepiej skorelowanych zmiennych.
+
+Korelacja poszczególnych zmiennych ze składowymi wygląda następująco:
+
+```{r}
+print(pr.data.rot$loadings, cutoff = 0.55)
+```
+
+## Podsumowanie analizy głównych składowych
+
+```{r}
+data.rot.pca <- pr.data.rot$scores %>% 
+  as.data.frame() 
+
+data.rot.pca %>% 
+  ggplot(aes(x = RC1, y = RC2)) +
+  geom_point() +
+  theme_minimal() + geom_text_repel(aes(label = data$country)) +
+  xlab("Human development and air quality (inversely proportional)") +
+  ylab("Cancer mortality (ascending)")  + 
+  ggtitle("Principal component analysis- results")
+```
+
+# Analiza skupień
+
+Aby wybrać najlepsze pogrupowanie obserwacji i liczbę grup użyto dwóch
+algorytmów grupowania oraz dla algorytmu k-średnich sprawdzono kryteria
+wyboru optymalnej liczby grup, które będą zwizualizowane na wykresach.
+
+## Algorytm grupowania hierarchicznego
+
+Zaczęto od sprawdzenia, jak pogrupowane zostaną obserwacje przy użyciu
+algorytmu grupowania hierarchicznego metodą Warda. Wartości zmiennych
+zostały ustandaryzowane, po czym utworzona została macierz dystansu
+metodą euklidesową miary odległości.
+
+Utworzony dendrogram pozwolił zobaczyć, jak algorytm pogrupował
+obserwacje:
+
+```{r}
+data.scaled <- scale(data[,2:9]) %>%  as.data.frame()
+
+d <- dist(data.scaled, method = "euclidean")
+hc1 <- hclust(d, method = "ward.D2")
+
+fviz_dend(hc1)
+```
+
+## Pogrupowanie obserwacji za pomocą algorytmu k-średnich
+
+### Kryteria podziału grup
+
+#### Wykres osypiska sumy wariancji wewnątrzgrupowej
+
+```{r}
+x <- rep(0, 10)
+for(i in 1:10)
+  x[i] <- kmeans(data.scaled, centers = i, nstart = 10)$tot.withinss
+
+fviz_nbclust(scale(data[2:9]), kmeans, method = "wss")
+
+```
+
+Wykres osypiska wyraźnie sugeruje podział obserwacji na dwie grupy,
+można też dostrzec, że krzywa staje się mniej stroma dla liczby grup
+równej pięć.
+
+#### Kryterium Calińskiego-Harabasza
+
+```{r}
+km.ch <- kmeansruns(data.scaled, criterion = "ch", runs = 10)
+plot(km.ch$crit, type = "b")
+
+```
+
+Według tego kryterium, stosunek wariancji międzygrupowej do wariancji
+wewnątrzgrupowej jest maksymalny dla dwóch grup, wykres sugeruje
+również, drugim najlepszym wyborem będzie podział na pięć grup.
+
+#### Kryterium średniej sylwetki
+
+```{r}
+km.asw <- kmeansruns(scale(data.scaled), criterion = "asw", runs = 10)
+plot(km.asw$crit, type = "b")
+
+```
+
+Wykres ten z kolei przedstawia podział na sześć grup jako najbardziej
+odpowiedni.
+
+### Wybór liczby grup
+
+Po przeanalizowaniu wyników powyższych kryteriów wyboru liczby grup do
+algorytmu k-średnich, wyników grupowania hierarchicznego oraz wiedzy na
+temat analizowanych krajów zdecydowano, że przeprowadzone zostanie
+grupowanie k-średnich dla pięciu grup.
+
+### Stabilność grup
+
+```{r}
+clusterboot(data.scaled, B = 500,
+            clustermethod = kmeansCBI, krange = 5)
+```
+
+Dzięki funkcji „clusterboot" na podstawie stabilności grup
+można określić czy wybór danej ilości był słuszny. Okazuje
+się, że jedynie jedna z grup częściowo odstaje stabilnością od reszty,
+natomiast mieści się ona w przyjętych normach. Pozostałe grupy są
+stabilne.
+
+## Grupy i ich charakterystyka w zależności od algorytmu
+
+### Grupowanie hierarchiczne dla pięciu grup
+
+Obserwacje przydzielone do grup na dendrogramie prezentują się
+następująco:
+
+```{r}
+cutree(hc1, k = 5) %>% table()
+
+fviz_dend(hc1, k = 5, rect = TRUE, color_labels_by_k = TRUE, 
+          cex = 0.7, ylab = "")
+
+data$cluster.w <- cutree(hc1, k = 5) %>% as.factor()
+plot_boxplot(data[, 2:10], by = "cluster.w")
+
+data.rot.pca %>% 
+  ggplot(aes(x = RC1, y = RC2))+
+  geom_point(aes(col = data$cluster.w)) +
+  geom_text_repel(aes(label = data$country)) + 
+  theme_minimal() +
+  ggtitle("Countries by hierarchical clustering") +
+  ylab("cancer mortality (ascending)") +
+  xlab("Human development and air quality (inversely proportional)")
+
+```
+
+Do grupy pierwszej trafiło jedenaście obserwacji, do drugiej pięć, w
+trzeciej i piątej grupie znalazły się po cztery obserwacje, a w czwartej
+grupie trzy.
+
+Trzecia grupa to kraje o dużym zanieczyszczeniu powietrza, największym
+procencie osób używających wyrobów tytoniowych, wysokim wskaźniku
+umieralności na nowotwory i dość niskim wskaźniku rozwoju społecznego,
+lecz, co ciekawe, ma najniższą umieralność z powodu przedawkowań
+narkotyków. Do tej grupy zaliczają się Bułgaria, Polska, Chorwacja i
+Węgry.
+
+Najlepiej wypada grupa piąta, z najwyższym wskaźnikiem rozwoju
+społecznego. Są w niej Islandia, Irlandia, Norwegia i Finlandia.
+Powietrze w krajach z tej grupy jest najmniej zanieczyszczone,
+umieralność na nowotwory jest na niższym poziomie niż w pozostałych
+grupach, mniej osób używa wyrobów tytoniowych, za to wskaźnik
+umieralności z powodu przedawkowań jest wyraźnie wyższy niż w grupach
+1-3.
+
+Wskaźnik ten jest wyższy tylko dla krajów z grupy czwartej - Litwa,
+Szwecja, Estonia. Kraje te w porównaniu do grupy piątej mają większą
+ilość zgonów na nowotwory i znacznie większy procent osób palących.
+
+Grupę drugą, do której trafiły Belgia, Niemcy, Holandia, Dania i Grecja
+wyróżnia największa liczba zgonów na raka piersi. Mało w tych krajach
+jednak pali się tytoniu i liczba zgonów z powodu przedawkowań jest
+niewielka. Wskaźnik HDI dla tych krajów jest wysoki.
+
+Grupa pierwsza, najliczniejsza, ma raczej średni poziom wszystkich
+wskaźników, przy czym średnia śmiertelność z powodu nowotworów górnych
+dróg oddechowych jest niewielka.
+
+### Grupowanie przy użyciu algorytmu k-średnich
+
+```{r}
+
+
+set.seed(10)
+km <- kmeans(data.scaled, centers = 5, nstart = 10)
+
+data$cluster.km <- km$cluster %>% as.factor()
+table(data$cluster.km)
+plot_boxplot(data[, 2:11], by = "cluster.km")
+
+autoplot(km, data = scale(data[, 2:9]), frame = TRUE, rotate ="varimax") +
+  geom_text_repel(label = data$country) +
+  theme_minimal()
+
+data.rot.pca %>% 
+  ggplot(aes(x = RC1, y = RC2, frame = TRUE))+ 
+  geom_point(aes(col = data$cluster.km)) +
+  geom_text_repel(aes(label = data$country)) + 
+  theme_minimal() +
+  ggtitle("Countries by k-means clustering- results") +
+  ylab("cancer mortality (ascending)") +
+  xlab("Human development and air quality (inversely proportional)")
+```
+
+Na powyższych wykresach pokazano kolejno:
+podział według algorytmu k-średnich dla pięciu grup według składowych z
+analizy PCA przed rotacją, jak wyżej, tylko po rotacji. Po
+przeanalizowaniu wykresów ilustrujących wyniki wszystkich grupowań,
+stwierdzono, że w przypadku wykorzystanych do projektu danych najlepiej
+sprawdził się podział państw na pięć grup algorytmem k-średnich.
+Grupowanie taką metodą sprawia, że gromady są bardziej równomierne, nie
+ma w nich wyraźnych państw odstających (np. Szwajcaria znajdująca się w
+najliczniejszej grupie na wykresie grupowania hierarchicznego obecnie
+jest przypisana do grupy „najlepszych" państw, a analiza wzrokowa tylko
+potwierdza słuszność takiego wyboru) oraz sugerując się wiedzą ogólną o
+państwach UE można przypuszczać, że podział metodą k-means ma większe 
+uzasadnienie. Przedstawia się on następująco:
+
+W pierwszej grupie znalazło się pięć krajów, w drugiej siedem, do
+trzeciej grupy trafiło osiem państw, do czwartej trzy państwa, a do
+piątej cztery.
+
+Pierwsza grupa to kraje z najwyższym wskaźnikiem rozwoju społecznego,
+bardzo małym poziomem pyłu zawieszonego w powietrzu i niskim procentem
+ludności używającej wyroby tytoniowe. Ma też najmniejszy wskaźnik
+śmiertelności z powodu nowotworów górnych dróg oddechowych i pozostałych
+uwzględnionych w analizie nowotworów. Wysoki jest jednak wskaźnik
+umieralności z powodu przedawkowania narkotyków. W tej grupie znalazły
+się Islandia, irlandia, Norwegia, Szwajcaria i Finlandia.
+
+Najniższy wskaźnik HDI mają kraje z grupy piątej. Cechuje je ponadto
+niski wskaźnik umierających z powodu przedawkowań, jednak najwyższy
+odsetek palących tytoń, najwyższy poziom zanieczyszczenia powietrza,
+największa umieralność z powodu nowotworów górnych dróg oddechowych i
+dolnego odcinka układu pokarmowego. W grupie tej znalazły się Polska,
+Bułgaria, Chorwacja i Węgry.
+
+Czwarta grupa to kraje z największą liczbą zgonów spowodowanych
+przedawkowaniami, raczej niskim średnim wskaźnikiem HDI, ale raczej
+niższą umieralnością na nowotwory i umiarkowanym odsetkiem osób
+używających wyroby tytoniowe. Zanieczyszczenie powietrza jest za to
+bardzo małe. Kraje te to Szwecja, Litwa i Estonia.
+
+W grupie drugiej są kraje z wysokim wskaźnikiem rozwoju gospodarczego i
+niedużym odsetkiem osób palących. Umieralność na nowotwór piersi oraz
+białaczkę jest w tej grupie najwyższa, umieralność z powodu innych
+nowotworów również wysoka. Poziom zgonów z przedawkowań raczej
+niewielki. Państwa w tej grupie to Francja, Włochy, Belgia, Niemcy,
+Holandia, Dania i Grecja.
+
+Grupa trzecia wskaźniki ma najbardziej umiarkowane, przy czym dość spory
+jest poziom pyłu zawieszonego w powietrzu. Grupa ta jest także
+najliczniejsza, państwa, które do niej trafiły to Cypr, Słowacja,
+Austria, Hiszpania, Czechy, Łotwa, Portugalia i Słowenia.
+
+# Podsumowanie
+
+Wykonanie powyższych analiz pozwoliło dokonać podziału krajów Unii
+Europejskiej na pięć rozłącznych grup ze względu na wartości zmiennych,
+które brano pod uwagę w analizie. Analiza składowych głównych umożliwiła
+ukazanie zależności ośmiu zmiennych za pomocą dwóch składowych. Im
+większa wartość RC1, tym wyższy poziom pyłu zawieszonego w powietrzu, a
+jednocześnie niższy wskaźnik rozwoju społecznego. Im wyższa wartość RC2,
+tym większy poziom umieralności na nowotwory górnych dróg oddechowych,
+dolnego odcinka pokarmowego, piersi i białaczkę. Taki dobór składowych
+wyjaśnił 69,1% zmienności. Następnie, po sprawdzeniu struktury podziału
+na grupy różnych algorytmów, przyjęto podział metodą k-średnich.
+Utworzone grupy były stabilne, a liczba obserwacji w poszczególnych
+grupach była bardziej równomierna niż w przypadku grupowania
+hierarchicznego. Podział przedstawiony został na wykresach i
+przeanalizowany w rozdziale "Grupowanie przy użyciu algorytmu
+k-średnich". Można zauważyć, że kraje, które wypadają najkorzystniej
+(Islandia, Irlandia, Norwegia, Szwajcaria, Finlandia) położone są
+bardziej na północ, niż kraje, które wypadły najgorzej (Bułgaria,
+Polska, Chorwacja, Węgry). Ciekawa zależność, którą uwydatniła wykonana
+analiza, to dodatnia korelacja pomiędzy poziomem wskaźnika HDI, a
+ilością śmiertelnych przedawkowań narkotyków.
+
+
